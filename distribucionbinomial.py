@@ -4,12 +4,19 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 
+# Función para formato científico en valores pequeños
+def formato_cientifico(valor, umbral=1e-4):
+    """Formatea números menores al umbral a notación científica"""
+    if valor < umbral and valor != 0:
+        return f"{valor:.2e}".replace("e-0", "e-")
+    return f"{valor:.4f}"
+
 # Configuración de la página
 st.set_page_config(page_title="Calculadora Binomial", layout="wide")
 st.title("📊 Calculadora de Distribución Binomial")
 st.markdown("---")
 
-# Sidebar para entradas
+# Sidebar para parámetros
 with st.sidebar:
     st.header("⚙️ Parámetros")
     n = st.number_input("Número de ensayos (n)", min_value=1, value=10, step=1)
@@ -25,7 +32,8 @@ def calcular_tabla(n, p):
     datos = []
     for x in range(n+1):
         prob = probabilidad_binomial(n, p, x)
-        datos.append([x, prob, sum(probabilidad_binomial(n, p, k) for k in range(x+1))])
+        acum = sum(probabilidad_binomial(n, p, k) for k in range(x+1))
+        datos.append([x, prob, acum])
     return pd.DataFrame(datos, columns=["x", "P(X=x)", "P(X≤x)"])
 
 # Cálculos principales
@@ -34,7 +42,7 @@ esperanza = n * p
 varianza = n * p * (1 - p)
 desviacion = math.sqrt(varianza)
 
-# Mostrar métricas principales
+# Métricas principales
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Media (μ)", f"{esperanza:.2f}")
@@ -45,158 +53,120 @@ with col3:
 
 st.markdown("---")
 
-# Sección de gráficos interactivos con Plotly
+# Gráficos interactivos
 col_graf1, col_graf2 = st.columns(2)
 
-# Gráfico interactivo de la Función de Densidad de Probabilidad
+# Gráfico de densidad de probabilidad
 with col_graf1:
-    st.subheader("Función de Densidad de Probabilidad (Interactiva)")
+    st.subheader("Función de Densidad de Probabilidad")
     
-    # Crear figura interactiva
-    fig_density = go.Figure()
+    # Preparar datos formateados
+    df["P(X=x)_fmt"] = df["P(X=x)"].apply(formato_cientifico)
     
-    # Barra de la densidad
-    fig_density.add_trace(go.Bar(
+    fig_densidad = go.Figure()
+    fig_densidad.add_trace(go.Bar(
         x=df["x"],
         y=df["P(X=x)"],
         marker_color="#1f77b4",
         name="P(X=x)",
-        hovertemplate="x: %{x}<br>P(X=x): %{y:.4f}<extra></extra>"
+        hovertemplate="<b>x</b>: %{x}<br><b>Probabilidad</b>: %{customdata}<extra></extra>",
+        customdata=df["P(X=x)_fmt"]
     ))
     
-    # Calcular valores en y para la media y para media ± σ usando interpolación
-    x_vals = df["x"].to_numpy()
-    y_vals = df["P(X=x)"].to_numpy()
-    y_media = np.interp(esperanza, x_vals, y_vals)
-    y_left = np.interp(esperanza - desviacion, x_vals, y_vals)
-    y_right = np.interp(esperanza + desviacion, x_vals, y_vals)
+    # Líneas de referencia
+    for valor, color, nombre in [
+        (esperanza, "red", "Media"),
+        (esperanza - desviacion, "green", "Media - σ"),
+        (esperanza + desviacion, "blue", "Media + σ")
+    ]:
+        y_val = np.interp(valor, df["x"], df["P(X=x)"])
+        fig_densidad.add_shape(
+            type="line",
+            x0=valor, y0=0, x1=valor, y1=y_val,
+            line=dict(color=color, width=1, dash="dot")
+        )
+        fig_densidad.add_trace(go.Scatter(
+            x=[valor], y=[y_val],
+            mode="markers",
+            marker=dict(color=color, size=8),
+            name=nombre,
+            hovertemplate=f"<b>{nombre}</b>: {valor:.2f}<extra></extra>"
+        ))
     
-    # Agregar líneas verticales delgadas y puntos pequeños al final para cada indicador
-    # Para la Media:
-    fig_density.add_shape(
-        type="line",
-        x0=esperanza,
-        y0=0,
-        x1=esperanza,
-        y1=y_media,
-        line=dict(color="red", width=1),
-    )
-    fig_density.add_trace(go.Scatter(
-        x=[esperanza],
-        y=[y_media],
-        mode="markers",
-        marker=dict(color="red", size=8),
-        name="Media",
-        hovertemplate="Media: %{x:.2f}<br>P: %{y:.4f}<extra></extra>"
-    ))
-    
-    # Para Media - σ:
-    fig_density.add_shape(
-        type="line",
-        x0=esperanza - desviacion,
-        y0=0,
-        x1=esperanza - desviacion,
-        y1=y_left,
-        line=dict(color="green", width=1),
-    )
-    fig_density.add_trace(go.Scatter(
-        x=[esperanza - desviacion],
-        y=[y_left],
-        mode="markers",
-        marker=dict(color="green", size=8),
-        name="Media - σ",
-        hovertemplate="Media - σ: %{x:.2f}<br>P: %{y:.4f}<extra></extra>"
-    ))
-    
-    # Para Media + σ:
-    fig_density.add_shape(
-        type="line",
-        x0=esperanza + desviacion,
-        y0=0,
-        x1=esperanza + desviacion,
-        y1=y_right,
-        line=dict(color="blue", width=1),
-    )
-    fig_density.add_trace(go.Scatter(
-        x=[esperanza + desviacion],
-        y=[y_right],
-        mode="markers",
-        marker=dict(color="blue", size=8),
-        name="Media + σ",
-        hovertemplate="Media + σ: %{x:.2f}<br>P: %{y:.4f}<extra></extra>"
-    ))
-    
-    # Agregar anotación con la varianza y la desviación
-    fig_density.add_annotation(
-        x=1,
-        y=1,
-        xref="paper",
-        yref="paper",
-        text=f"Varianza = {varianza:.2f}<br>Desviación = {desviacion:.2f}",
-        showarrow=False,
-        align="right",
-        bordercolor="black",
-        borderwidth=1,
-        bgcolor="rgb(0, 0, 0)",
-        opacity=0.8
-    )
-    
-    # Actualizar diseño de la figura
-    fig_density.update_layout(
-        title="Función de Densidad de Probabilidad",
+    fig_densidad.update_layout(
         xaxis_title="Número de éxitos (x)",
         yaxis_title="Probabilidad",
-        xaxis=dict(tickmode="linear", dtick=1),
         template="plotly_white",
-        hovermode="x unified"
+        hovermode="x unified",
+        showlegend=False
     )
-    
-    st.plotly_chart(fig_density, use_container_width=True)
+    st.plotly_chart(fig_densidad, use_container_width=True)
 
-# Gráfico interactivo de la Función de Distribución Acumulada
+# Gráfico de distribución acumulada
 with col_graf2:
-    st.subheader("Función de Distribución Acumulada (Interactiva)")
+    st.subheader("Función de Distribución Acumulada")
     
-    fig_cumulative = go.Figure()
-    fig_cumulative.add_trace(go.Scatter(
+    # Preparar datos formateados
+    df["P(X≤x)_fmt"] = df["P(X≤x)"].apply(formato_cientifico)
+    
+    fig_acumulada = go.Figure()
+    fig_acumulada.add_trace(go.Scatter(
         x=df["x"],
         y=df["P(X≤x)"],
         mode="lines+markers",
-        line_shape="hv",  # crea un gráfico tipo escalón
-        marker=dict(color="#ff7f0e", size=8),
+        line_shape="hv",
+        marker=dict(color="#ff7f0e", size=6),
         line=dict(color="#ff7f0e", width=2),
         name="P(X≤x)",
-        hovertemplate="x: %{x}<br>P(X≤x): %{y:.4f}<extra></extra>"
+        hovertemplate="<b>x</b>: %{x}<br><b>Prob. Acumulada</b>: %{customdata}<extra></extra>",
+        customdata=df["P(X≤x)_fmt"]
     ))
     
-    fig_cumulative.update_layout(
-        title="Función de Distribución Acumulada",
+    fig_acumulada.update_layout(
         xaxis_title="Número de éxitos (x)",
-        yaxis_title="Probabilidad acumulada",
-        xaxis=dict(tickmode="linear", dtick=1),
+        yaxis_title="Probabilidad Acumulada",
         template="plotly_white",
         hovermode="x unified"
     )
-    
-    st.plotly_chart(fig_cumulative, use_container_width=True)
+    st.plotly_chart(fig_acumulada, use_container_width=True)
 
-# Tabla interactiva
+# Tabla de probabilidades con formato
 st.markdown("---")
-st.subheader("Tabla de Probabilidades")
-st.dataframe(df.style.format({"P(X=x)": "{:.4f}", "P(X≤x)": "{:.4f}"}), height=400)
+st.subheader("📈 Tabla de Probabilidades")
 
-# Cálculo de probabilidades personalizadas
+def formatear_fila(valor):
+    if isinstance(valor, float):
+        return formato_cientifico(valor)
+    return valor
+
+st.dataframe(
+    df[["x", "P(X=x)", "P(X≤x)"]].style.format({
+        "P(X=x)": formatear_fila,
+        "P(X≤x)": formatear_fila
+    }),
+    height=400,
+    use_container_width=True
+)
+
+# Cálculo de rango personalizado
 st.markdown("---")
-st.subheader("🔍 Cálculo de probabilidades específicas")
+st.subheader("🔍 Calculadora de Rango")
 
 col4, col5 = st.columns(2)
 with col4:
-    x_min = st.number_input("Mínimo de éxitos", min_value=0, max_value=n, value=0)
+    min_x = st.number_input("Mínimo de éxitos", min_value=0, max_value=n, value=0)
 with col5:
-    x_max = st.number_input("Máximo de éxitos", min_value=0, max_value=n, value=n)
+    max_x = st.number_input("Máximo de éxitos", min_value=0, max_value=n, value=n)
 
-prob_acumulada = sum(probabilidad_binomial(n, p, x) for x in range(x_min, x_max+1))
-st.metric(f"P({x_min} ≤ X ≤ {x_max})", f"{prob_acumulada:.4f}")
+prob_rango = sum(probabilidad_binomial(n, p, x) for x in range(min_x, max_x+1))
+st.metric(
+    label=f"P({min_x} ≤ X ≤ {max_x})",
+    value=formato_cientifico(prob_rango)
+)
 
 st.markdown("---")
-st.caption("Creado por Muerto. Usa las flechas ← para ajustar parámetros")
+st.caption("✨ Creado con Streamlit y Plotly | Notación científica para valores < 0.0001")
+
+# Validación para distribución degenerada
+if p in (0.0, 1.0):
+    st.warning("⚠️ Distribución degenerada: Todos los resultados son idénticos.")
